@@ -10,7 +10,7 @@
 ;; Keywords: languages
 ;; URL: https://github.com/Groovy-Emacs-Modes/groovy-emacs-modes
 ;; Version: 2.2
-;; Package-Requires: ((s "1.12.0") (emacs "24.3") (dash "2.13.0"))
+;; Package-Requires: ((emacs "24.3"))
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -43,8 +43,7 @@
 
 ;;; Code:
 
-(require 's)
-(require 'dash)
+(require 'subr-x)
 
 (defvar groovy-mode-syntax-table
   (let ((table (make-syntax-table)))
@@ -405,8 +404,8 @@
       (or (and
            (not (groovy--in-string-p))
            (not (groovy--comment-p (point)))
-           (let ((match-s (s-trim (match-string 0))))
-             (when (s-ends-with-p "<" match-s)
+           (let ((match-s (string-trim (match-string 0))))
+             (when (string-suffix-p "<" match-s)
                (groovy--travel-parameterized-types))
              (let ((var-match
                     (re-search-forward
@@ -426,9 +425,9 @@
                                                 'groovy-function-name (match-data)))
                            nil)
                        ;; else if declaration followed by ',' then it's of form `String a, b,c'
-                       (unless (or (s-starts-with-p "(" match-s)
-                                   (s-starts-with-p "{" match-s)
-                                   (s-starts-with-p "," match-s))
+                       (unless (or (string-prefix-p "(" match-s)
+                                   (string-prefix-p "{" match-s)
+                                   (string-prefix-p "," match-s))
 
                          (with-silent-modifications
                            (while (re-search-forward (rx-to-string
@@ -729,8 +728,8 @@ Then this function returns (\"def\" \"if\" \"switch\")."
       (setq enclosing-paren-pos (nth 1 (syntax-ppss)))
       (while enclosing-paren-pos
         (goto-char enclosing-paren-pos)
-        (let* ((line (s-trim (groovy--current-line)))
-               (symbols (s-split (rx symbol-end) line t))
+        (let* ((line (string-trim (groovy--current-line)))
+               (symbols (string-split line (rx symbol-end) t))
                (symbol (car-safe symbols)))
           (push symbol blocks))
         (setq enclosing-paren-pos (nth 1 (syntax-ppss)))))
@@ -744,7 +743,7 @@ Then this function returns (\"def\" \"if\" \"switch\")."
 
 (defun groovy--remove-comments (src)
   "Remove all comments from a string SRC of groovy source code."
-  (->> src
+  (thread-last src
        (replace-regexp-in-string (rx "/*" (*? anything) "*/") "")
        (replace-regexp-in-string (rx "//" (* not-newline)) "")))
 
@@ -805,7 +804,7 @@ Only one opening paren per source code line is counted."
         ;; Get the part of the line that isn't in a comment.
         ;; If this isn't just white space, return it as a code line.
         (setq code-text (groovy--extract-line-without-comments))
-        (unless (s-blank-str-p code-text)
+        (unless (string-blank-p (or code-text ""))
           (throw 'done code-text))))))
 
 (defun groovy--line-ends-with-incomplete-block-statement-p ()
@@ -832,7 +831,7 @@ statement, without an open curly brace."
 
 (defun groovy--trim-current-line ()
   "Return the current code line trimmed and without comments."
-  (s-trim (groovy--remove-comments (groovy--current-line))))
+  (string-trim (groovy--remove-comments (groovy--current-line))))
 
 (defun groovy-indent-line ()
   "Indent the current line according to the number of parentheses."
@@ -849,19 +848,19 @@ statement, without an open curly brace."
           (when current-paren-pos
             (save-excursion
               (goto-char current-paren-pos)
-              (s-trim
+              (string-trim
                (groovy--remove-comments
                 (buffer-substring
                  (1+ current-paren-pos)
                  (line-end-position)))))))
-         (current-line (s-trim (groovy--current-line)))
+         (current-line (string-trim (groovy--current-line)))
          has-closing-paren)
     ;; If this line starts with a closing paren, unindent by one level.
     ;;   if {
     ;;   } <- this should not be indented.
-    (when (or (s-starts-with-p "}" current-line)
-              (s-starts-with-p ")" current-line)
-              (s-starts-with-p "]" current-line))
+    (when (or (string-prefix-p "}" current-line)
+              (string-prefix-p ")" current-line)
+              (string-prefix-p "]" current-line))
       (setq has-closing-paren t)
       (setq current-paren-depth (1- current-paren-depth)))
 
@@ -886,7 +885,7 @@ statement, without an open curly brace."
      ;;          2,
      ;; ]
      ;; correctly.
-     ((and (not (s-blank-str? text-after-paren))
+     ((and (not (string-blank-p (or text-after-paren "")))
            (not has-closing-paren)
            ;; ensure we don't indent closures
            (not (string-match (rx "->" eol) text-after-paren)))
@@ -913,7 +912,7 @@ statement, without an open curly brace."
             (when (and
                    prev-line
                    (not end-slashy-string)
-                   (not (s-matches-p groovy--case-regexp prev-line))
+                   (not (string-match-p groovy--case-regexp prev-line))
                    (or (groovy--ends-with-infix-p prev-line)
                        (and (groovy--ends-with-comma-p prev-line)
                             (not (memq current-paren-character (list ?\[ ?\()))
@@ -937,7 +936,7 @@ statement, without an open curly brace."
                  (progn
                    (while
                        (let ((cur-line (groovy--trim-current-line)))
-                         (and (s-starts-with-p "else" line-after)
+                         (and (string-prefix-p "else" line-after)
                               (string-match (rx line-start (optional "else" (+ blank)) "if" symbol-end) cur-line)
                               (groovy--backwards-to-prev-code-line)
                               (setq line-after cur-line))))
@@ -948,7 +947,7 @@ statement, without an open curly brace."
 
         ;; If this line is .methodCall() then we should indent one
         ;; more level.
-        (when (s-starts-with-p "." current-line)
+        (when (string-prefix-p "." current-line)
           (setq indent-level (1+ indent-level)))
 
         ;; If we're inside a switch statement, we should indent
@@ -964,13 +963,13 @@ statement, without an open curly brace."
             ;;
             ;; [1, 2, 3]
             ;;     .findAll { // <- indented
-            (when (s-starts-with-p "." block-symbol)
+            (when (string-prefix-p "." block-symbol)
               (setq indent-level (1+ indent-level))))
 
           (when (> switch-count 0)
             (setq indent-level (+ indent-level switch-count))
             ;; The `case foo:' line should be indented less than the body.
-            (when (s-matches-p groovy--case-regexp current-line)
+            (when (string-match-p groovy--case-regexp current-line)
               (setq indent-level (1- indent-level)))
             ;; The extra indent does not apply to the } closing the
             ;; switch block.
